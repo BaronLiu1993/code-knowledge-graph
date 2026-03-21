@@ -1,41 +1,36 @@
 import json
+import sys
 import os
-import requests
-from dotenv import load_dotenv
-import anthropic
 
-load_dotenv()
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Replace with OAuth later
-token = os.getenv('GITHUB_ACCESS_TOKEN')
-anthropic_client = anthropic.Client()
-
-class GraphNode:
-    def __init__(self, name, node_type):
-        self.name = name
-        self.node_type = node_type
-        self.edges = []
-    
+from utils.github.client import fetch_repo_tree, fetch_file_content_by_sha, is_code_file
+from utils.graph.builder import build_structural_graph, resolve_imports, serialize_graph
+from utils.graph.pagerank import compute_pagerank
+from utils.ai.symbol_extractor import extract_symbols_from_file
+# from utils.ai.symbol_extractor import analyze_module_relationships, analyze_cross_module_relationships
 
 
-def construct_relationship():
-    pass
+def build_knowledge_graph(owner, repository):
+    raw_tree = fetch_repo_tree(owner, repository)
+    nodes, adj_list = build_structural_graph(raw_tree)
+    code_files = [path for path, node in nodes.items() if node.node_type == "file" and is_code_file(path)]
 
-def get_repo_tree(owner, repository):
-    HEADERS = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    response = requests.get(
-        f"https://api.github.com/repos/{owner}/{repository}/git/trees/main",
-        headers=HEADERS,
-        params={"recursive": "1"}
-    )
-    print(json.dumps(response.json(), indent=2))
+    for path in code_files:
+        content = fetch_file_content_by_sha(owner, repository, nodes[path].sha)
+        extract_symbols_from_file(path, content, nodes, adj_list)
+    resolve_imports(nodes, adj_list)
+    # modules = group_files_by_module(nodes)
+    # for module_name, file_paths in modules.items():
+    #     if len(file_paths) > 1:
+    #         analyze_module_relationships(module_name, file_paths, adj_list, nodes)
+    # analyze_cross_module_relationships(list(modules.keys()), adj_list, nodes)
+    compute_pagerank(nodes, adj_list)
+    graph = serialize_graph(nodes, adj_list)
+    nodes_sha_lookup = {path: node.sha for path, node in nodes.items() if node.sha}
+    return graph, nodes_sha_lookup
 
-def parse_repo_tree(raw_tree):
-    
-    pass
 
-get_repo_tree("baronliu1993", "palettebackend")
+if __name__ == "__main__":
+    graph, _ = build_knowledge_graph("baronliu1993", "palettebackend")
+    print(json.dumps(graph, indent=2))
