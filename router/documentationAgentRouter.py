@@ -12,3 +12,7 @@ def build_graph(owner: str, repository: str):
     claude_files = generate_documentation(owner, repository)
     pr_url = submit_documentation_pr(owner, repository, claude_files)
     return {"status": "success", "pr_url": pr_url}
+
+@router.get("/check-drift")
+def check_drift(owner: str, repository: str):
+    pass
