@@ -1,34 +1,54 @@
 import sys
 import os
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from service.knowledgeGraphService import build_knowledge_graph
 from utils.github.client import fetch_file_content_by_sha, is_code_file
-from utils.ai.documentation_generator import create_documentation_session
+from utils.ai.documentation_generator import (
+    generate_shared_context,
+    generate_root_claude_md,
+    generate_folder_claude_md,
+)
 from utils.github.writer import create_branch, create_or_update_file, create_pull_request
 
-def generate_documentation(owner, repository):
+
+def generate_documentation(owner, repository, max_workers=4):
     print(f"Building knowledge graph for {owner}/{repository}...")
     graph, nodes_lookup = build_knowledge_graph(owner, repository)
 
     print("Fetching source code for context...")
     file_contents = _fetch_all_file_contents(owner, repository, graph, nodes_lookup)
 
-    print("Creating documentation session (shared context)...")
-    session = create_documentation_session(graph, file_contents)
+    print("Generating shared repository context...")
+    shared_context = generate_shared_context(graph, file_contents)
+    print(f"Shared context generated ({len(shared_context)} chars)")
 
     folders = _group_nodes_by_folder(graph)
     claude_files = {}
 
-    print("Generating root CLAUDE.md...")
-    claude_files["CLAUDE.md"] = session.generate_root_claude_md()
+    tasks = {}
+    print(f"Spawning {len(folders) + 1} parallel sub-agents...")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        tasks[executor.submit(
+            generate_root_claude_md, graph, file_contents, shared_context
+        )] = "CLAUDE.md"
 
-    for folder_path, folder_nodes in folders.items():
-        print(f"Generating CLAUDE.md for {folder_path}/...")
-        content = session.generate_folder_claude_md(folder_path, folder_nodes)
-        claude_files[f"{folder_path}/CLAUDE.md"] = content
+        for folder_path, folder_nodes in folders.items():
+            tasks[executor.submit(
+                generate_folder_claude_md, folder_path, folder_nodes,
+                graph, file_contents, shared_context
+            )] = f"{folder_path}/CLAUDE.md"
+
+        for future in as_completed(tasks):
+            path = tasks[future]
+            try:
+                claude_files[path] = future.result()
+                print(f"  Done: {path}")
+            except Exception as e:
+                print(f"  Failed: {path} — {e}")
 
     return claude_files
 
@@ -55,7 +75,8 @@ def submit_documentation_pr(owner, repository, claude_files):
         "- Parsed all files with tree-sitter to extract symbols and imports\n"
         "- Computed PageRank to identify the most critical files\n"
         "- Read actual source code to provide accurate descriptions\n"
-        "- Used LangChain conversation memory for cross-folder consistency\n\n"
+        "- Pre-generated shared repo context for cross-folder consistency\n"
+        "- Parallel sub-agents generated each folder's docs simultaneously\n\n"
         f"### Files created\n{file_list}"
     )
 
@@ -67,6 +88,7 @@ def submit_documentation_pr(owner, repository, claude_files):
     )
 
     return pr.get("html_url", "")
+
 
 def _fetch_all_file_contents(owner, repository, graph, nodes_lookup):
     file_contents = {}
@@ -95,19 +117,19 @@ def _group_nodes_by_folder(graph):
     return folders
 
 
-if __name__ == "__main__":
-    owner = "baronliu1993"
-    repo = "palettebackend"
+# if __name__ == "__main__":
+#     owner = "baronliu1993"
+#     repo = "palettebackend"
 
-    claude_files = generate_documentation(owner, repo)
+#     claude_files = generate_documentation(owner, repo)
 
-    print(f"\n=== Generated {len(claude_files)} CLAUDE.md files ===\n")
-    for path, content in claude_files.items():
-        print(f"--- {path} ---")
-        print(content[:500])
-        print("...\n")
+#     print(f"\n=== Generated {len(claude_files)} CLAUDE.md files ===\n")
+#     for path, content in claude_files.items():
+#         print(f"--- {path} ---")
+#         print(content[:500])
+#         print("...\n")
 
-    confirm = input("Create PR? (y/n): ")
-    if confirm.lower() == "y":
-        pr_url = submit_documentation_pr(owner, repo, claude_files)
-        print(f"\nPR created: {pr_url}")
+#     confirm = input("Create PR? (y/n): ")
+#     if confirm.lower() == "y":
+#         pr_url = submit_documentation_pr(owner, repo, claude_files)
+#         print(f"\nPR created: {pr_url}")

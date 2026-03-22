@@ -7,142 +7,119 @@ load_dotenv()
 
 MODEL = "gpt-4o-mini"
 
-
-def create_documentation_session(graph, file_contents):
-    llm = ChatOpenAI(model=MODEL, api_key=os.getenv("OPENAI_API_KEY"), max_tokens=4000)
-    message_history = []
-
-    system_prompt = (
-        "You are an expert documentation agent. Your job is to generate CLAUDE.md files "
-        "that give AI assistants maximum context about a codebase. You are working through "
-        "the repository folder by folder. You remember everything from previous folders — "
-        "reference connections between folders, reuse consistent terminology, and cross-link "
-        "when a folder depends on something you already documented."
-    )
-    message_history.append(SystemMessage(content=system_prompt))
-
-    repo_context = _generate_shared_context(llm, message_history, graph, file_contents)
-
-    return DocumentationSession(llm, message_history, graph, file_contents, repo_context)
+SYSTEM_PROMPT = (
+    "You are an expert documentation agent. Your job is to generate CLAUDE.md files "
+    "that give AI assistants maximum context about a codebase. Write deeply descriptive "
+    "documentation that covers what every file does, how they connect, what data flows "
+    "through them, and why each dependency exists."
+)
 
 
-class DocumentationSession:
-    def __init__(self, llm, message_history, graph, file_contents, repo_context):
-        self.llm = llm
-        self.message_history = message_history
-        self.graph = graph
-        self.file_contents = file_contents
-        self.repo_context = repo_context
-        self.generated_folders = []
-
-    def generate_root_claude_md(self):
-        top_nodes = _get_top_nodes_by_pagerank(self.graph, limit=15)
-        cross_folder_deps = _get_cross_folder_dependencies(self.graph)
-        top_file_code = _build_top_files_code_context(self.graph, self.file_contents, limit=8)
-        full_deps = _build_full_dependency_chain(self.graph, self.file_contents)
-
-        prompt = (
-            "Now generate the root CLAUDE.md for the entire repository. This is the single "
-            "most important file — an AI reading only this should understand everything.\n\n"
-            "Include these sections:\n"
-            "## What This Repository Does\n"
-            "Detailed description of the product, who uses it, what problem it solves.\n\n"
-            "## Architecture Overview\n"
-            "Pattern used, how requests flow, middleware, module communication.\n\n"
-            "## Folder Structure\n"
-            "Each folder: what it does, most important file, dependencies.\n\n"
-            "## Critical Files (by PageRank)\n"
-            "Most depended-upon files, what each does, why it's central.\n\n"
-            "## Module Dependency Map\n"
-            "For each cross-folder dependency: what, why, how, what breaks without it.\n\n"
-            "## Request Flow\n"
-            "Trace a typical request from entry to response, naming every file.\n\n"
-            "## Environment & Configuration\n"
-            "Env vars, external services, configs.\n\n"
-            "---\n"
-            f"## Top Files by PageRank\n{top_nodes}\n\n"
-            f"## Cross-Folder Dependencies\n{cross_folder_deps}\n\n"
-            f"## Full Dependency Chain\n{full_deps}\n\n"
-            f"## Critical Source Code\n{top_file_code}"
-        )
-
-        return self._send_message(prompt)
-
-    def generate_folder_claude_md(self, folder_path, folder_nodes):
-        relationship_map = _build_deep_relationship_map(folder_nodes, self.graph, self.file_contents)
-        source_code = _build_source_code_context(folder_nodes, self.file_contents)
-        inbound = _build_inbound_dependencies(folder_path, self.graph)
-
-        previously_documented = ""
-        if self.generated_folders:
-            previously_documented = (
-                f"\nYou have already documented these folders: {', '.join(self.generated_folders)}. "
-                "Reference them when relevant — cross-link dependencies, note shared patterns, "
-                "and maintain consistent terminology.\n"
-            )
-
-        prompt = (
-            f"Now generate CLAUDE.md for the folder: {folder_path}/\n"
-            f"{previously_documented}\n"
-            "Include these sections:\n"
-            "## Purpose\n"
-            "What this folder handles. What breaks if deleted. How it fits in the architecture.\n\n"
-            "## Files\n"
-            "For EACH file: what it does (from the code), exports, PageRank, why it matters.\n\n"
-            "## Dependency Map\n"
-            "For EACH import: WHAT is imported, WHY it's needed, HOW it's used. "
-            "Format: `source` → `target`: detailed explanation.\n\n"
-            "## Inbound Dependencies\n"
-            "Which files outside this folder depend on files here, and what they use.\n\n"
-            "## Data Flow\n"
-            "How data enters, transforms, and exits this folder.\n\n"
-            "## Key Patterns\n"
-            "Conventions, patterns, or anti-patterns.\n\n"
-            "---\n"
-            f"## Relationship Map\n{relationship_map}\n\n"
-            f"## Inbound Dependencies\n{inbound}\n\n"
-            f"## Source Code\n{source_code}"
-        )
-
-        result = self._send_message(prompt)
-        self.generated_folders.append(folder_path)
-        return result
-
-    def _send_message(self, prompt):
-        self.message_history.append(HumanMessage(content=prompt))
-        response = self.llm.invoke(self.message_history)
-        self.message_history.append(response)
-        return response.content
+def _create_llm():
+    return ChatOpenAI(model=MODEL, api_key=os.getenv("OPENAI_API_KEY"), max_tokens=4000)
 
 
-def _generate_shared_context(llm, message_history, graph, file_contents):
+def generate_shared_context(graph, file_contents):
+    llm = _create_llm()
     repo_summary = _build_repo_summary(graph)
     top_nodes = _get_top_nodes_by_pagerank(graph, limit=15)
     cross_deps = _get_cross_folder_dependencies(graph)
     top_code = _build_top_files_code_context(graph, file_contents, limit=5)
 
     prompt = (
-        "Before we generate any CLAUDE.md files, I need you to deeply understand this "
-        "repository. Analyze everything below and produce a comprehensive repository "
-        "context summary that captures:\n\n"
+        "Deeply analyze this repository and produce a comprehensive context summary. "
+        "This summary will be shared with multiple sub-agents that each generate "
+        "documentation for one folder. Capture everything they need:\n\n"
         "1. What this project does and its overall purpose\n"
         "2. The architecture pattern and how modules connect\n"
         "3. The role of each folder\n"
-        "4. Which files are most critical and why\n"
-        "5. How data flows through the system\n"
+        "4. Which files are most critical and why (PageRank = importance)\n"
+        "5. How data flows through the system end-to-end\n"
         "6. Key shared dependencies and what they provide\n"
-        "7. External services and env vars needed\n\n"
-        "This summary will be your reference for all subsequent CLAUDE.md generations. "
-        "Be thorough — every insight you capture here will make the per-folder docs better.\n\n"
+        "7. External services and env vars needed\n"
+        "8. Naming conventions and patterns used across the codebase\n\n"
+        "Be thorough — sub-agents cannot see each other's work, so this is their "
+        "only source of cross-folder awareness.\n\n"
         f"## Repository Structure\n{repo_summary}\n\n"
         f"## Top Files by PageRank\n{top_nodes}\n\n"
         f"## Cross-Folder Dependencies\n{cross_deps}\n\n"
         f"## Source Code of Most Critical Files\n{top_code}"
     )
 
-    message_history.append(HumanMessage(content=prompt))
-    response = llm.invoke(message_history)
-    message_history.append(response)
+    messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+    response = llm.invoke(messages)
+    return response.content
+
+
+def generate_root_claude_md(graph, file_contents, shared_context):
+    llm = _create_llm()
+    top_nodes = _get_top_nodes_by_pagerank(graph, limit=15)
+    cross_folder_deps = _get_cross_folder_dependencies(graph)
+    top_file_code = _build_top_files_code_context(graph, file_contents, limit=8)
+    full_deps = _build_full_dependency_chain(graph, file_contents)
+
+    prompt = (
+        "Generate the root CLAUDE.md for the entire repository. This is the single "
+        "most important file — an AI reading only this should understand everything.\n\n"
+        "Include these sections:\n"
+        "## What This Repository Does\n"
+        "Detailed description of the product, who uses it, what problem it solves.\n\n"
+        "## Architecture Overview\n"
+        "Pattern used, how requests flow, middleware, module communication.\n\n"
+        "## Folder Structure\n"
+        "Each folder: what it does, most important file, dependencies.\n\n"
+        "## Critical Files (by PageRank)\n"
+        "Most depended-upon files, what each does, why it's central.\n\n"
+        "## Module Dependency Map\n"
+        "For each cross-folder dependency: what, why, how, what breaks without it.\n\n"
+        "## Request Flow\n"
+        "Trace a typical request from entry to response, naming every file.\n\n"
+        "## Environment & Configuration\n"
+        "Env vars, external services, configs.\n\n"
+        "---\n"
+        f"## Shared Repository Context\n{shared_context}\n\n"
+        f"## Top Files by PageRank\n{top_nodes}\n\n"
+        f"## Cross-Folder Dependencies\n{cross_folder_deps}\n\n"
+        f"## Full Dependency Chain\n{full_deps}\n\n"
+        f"## Critical Source Code\n{top_file_code}"
+    )
+
+    messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+    response = llm.invoke(messages)
+    return response.content
+
+
+def generate_folder_claude_md(folder_path, folder_nodes, graph, file_contents, shared_context):
+    llm = _create_llm()
+    relationship_map = _build_deep_relationship_map(folder_nodes, graph, file_contents)
+    source_code = _build_source_code_context(folder_nodes, file_contents)
+    inbound = _build_inbound_dependencies(folder_path, graph)
+
+    prompt = (
+        f"Generate CLAUDE.md for the folder: {folder_path}/\n\n"
+        "Include these sections:\n"
+        "## Purpose\n"
+        "What this folder handles. What breaks if deleted. How it fits in the architecture.\n\n"
+        "## Files\n"
+        "For EACH file: what it does (from the code), exports, PageRank, why it matters.\n\n"
+        "## Dependency Map\n"
+        "For EACH import: WHAT is imported, WHY it's needed, HOW it's used. "
+        "Format: `source` → `target`: detailed explanation.\n\n"
+        "## Inbound Dependencies\n"
+        "Which files outside this folder depend on files here, and what they use.\n\n"
+        "## Data Flow\n"
+        "How data enters, transforms, and exits this folder.\n\n"
+        "## Key Patterns\n"
+        "Conventions, patterns, or anti-patterns.\n\n"
+        "---\n"
+        f"## Shared Repository Context\n{shared_context}\n\n"
+        f"## Relationship Map\n{relationship_map}\n\n"
+        f"## Inbound Dependencies\n{inbound}\n\n"
+        f"## Source Code\n{source_code}"
+    )
+
+    messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+    response = llm.invoke(messages)
     return response.content
 
 
@@ -200,7 +177,6 @@ def _build_deep_relationship_map(folder_nodes, graph, file_contents):
             lines.append("")
 
         if char_budget <= 0:
-            lines.append("(truncated — budget exceeded)")
             break
 
     return "\n".join(lines) if lines else "No import relationships in this folder."
