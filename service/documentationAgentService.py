@@ -14,7 +14,6 @@ from utils.ai.documentation_generator import (
 )
 from utils.github.writer import create_branch, create_or_update_file, create_pull_request
 
-
 def generate_documentation(owner, repository, max_workers=4):
     print(f"Building knowledge graph for {owner}/{repository}...")
     graph, nodes_lookup = build_knowledge_graph(owner, repository)
@@ -115,21 +114,3 @@ def _group_nodes_by_folder(graph):
         folder = node["name"].rsplit("/", 1)[0]
         folders.setdefault(folder, []).append(node)
     return folders
-
-
-# if __name__ == "__main__":
-#     owner = "baronliu1993"
-#     repo = "palettebackend"
-
-#     claude_files = generate_documentation(owner, repo)
-
-#     print(f"\n=== Generated {len(claude_files)} CLAUDE.md files ===\n")
-#     for path, content in claude_files.items():
-#         print(f"--- {path} ---")
-#         print(content[:500])
-#         print("...\n")
-
-#     confirm = input("Create PR? (y/n): ")
-#     if confirm.lower() == "y":
-#         pr_url = submit_documentation_pr(owner, repo, claude_files)
-#         print(f"\nPR created: {pr_url}")

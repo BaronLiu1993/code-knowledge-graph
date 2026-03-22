@@ -8,7 +8,6 @@ from utils.github.client import fetch_repo_tree, fetch_file_content_by_sha, is_c
 from utils.graph.builder import build_structural_graph, resolve_imports, serialize_graph
 from utils.graph.pagerank import compute_pagerank
 from utils.ai.symbol_extractor import extract_symbols_from_file
-# from utils.ai.symbol_extractor import analyze_module_relationships, analyze_cross_module_relationships
 
 
 def build_knowledge_graph(owner, repository):
@@ -20,17 +19,7 @@ def build_knowledge_graph(owner, repository):
         content = fetch_file_content_by_sha(owner, repository, nodes[path].sha)
         extract_symbols_from_file(path, content, nodes, adj_list)
     resolve_imports(nodes, adj_list)
-    # modules = group_files_by_module(nodes)
-    # for module_name, file_paths in modules.items():
-    #     if len(file_paths) > 1:
-    #         analyze_module_relationships(module_name, file_paths, adj_list, nodes)
-    # analyze_cross_module_relationships(list(modules.keys()), adj_list, nodes)
     compute_pagerank(nodes, adj_list)
     graph = serialize_graph(nodes, adj_list)
     nodes_sha_lookup = {path: node.sha for path, node in nodes.items() if node.sha}
     return graph, nodes_sha_lookup
-
-
-if __name__ == "__main__":
-    graph, _ = build_knowledge_graph("baronliu1993", "palettebackend")
-    print(json.dumps(graph, indent=2))
