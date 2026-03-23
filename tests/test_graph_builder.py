@@ -112,9 +112,7 @@ def test_serialize_graph_structure():
     nodes, adj_list = build_structural_graph(SAMPLE_TREE)
     result = serialize_graph(nodes, adj_list)
     assert "nodes" in result
-    assert "edges" in result
     assert isinstance(result["nodes"], list)
-    assert isinstance(result["edges"], list)
 
 
 def test_serialize_graph_node_fields():
@@ -126,13 +124,14 @@ def test_serialize_graph_node_fields():
     assert "label" in node
     assert "description" in node
     assert "pagerank" in node
+    assert "relationships" in node
 
 
-def test_serialize_graph_edge_fields():
+def test_serialize_graph_relationship_fields():
     nodes, adj_list = build_structural_graph(SAMPLE_TREE)
     result = serialize_graph(nodes, adj_list)
-    edge = result["edges"][0]
-    assert "subject" in edge
-    assert "predicate" in edge
-    assert "object" in edge
-    assert "confidence" in edge
+    folder_node = next(n for n in result["nodes"] if n["type"] == "folder" and n["relationships"])
+    rel = folder_node["relationships"][0]
+    assert "predicate" in rel
+    assert "target" in rel
+    assert "target_pagerank" in rel

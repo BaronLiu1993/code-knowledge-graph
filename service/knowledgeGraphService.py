@@ -1,4 +1,3 @@
-import json
 import sys
 import os
 
@@ -18,6 +17,7 @@ def build_knowledge_graph(owner, repository):
     for path in code_files:
         content = fetch_file_content_by_sha(owner, repository, nodes[path].sha)
         extract_symbols_from_file(path, content, nodes, adj_list)
+    
     resolve_imports(nodes, adj_list)
     compute_pagerank(nodes, adj_list)
     graph = serialize_graph(nodes, adj_list)
